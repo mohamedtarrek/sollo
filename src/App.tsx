@@ -1,21 +1,9 @@
 import { useState, useEffect } from 'react';
-import {
-  Connection,
-  PublicKey,
-  Transaction,
-  SystemProgram,
-  LAMPORTS_PER_SOL,
-} from '@solana/web3.js';
-
-import {
-  isMobileDevice,
-  checkExistingConnection,
-  getCachedWallet,
-} from './utils/mobileWallet';
-
+import { Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { isMobileDevice } from './utils/mobileWallet';
 import { WalletSelectorModal } from './utils/WalletSelectorModal';
-const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
 
+const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
 const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
 
 declare global {
@@ -31,51 +19,86 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [showMobileModal, setShowMobileModal] = useState(false);
 
-  const addLog = (msg: string) => {
-    setLogs((prev) => [...prev, `${new Date().toLocaleTimeString()} | ${msg}`]);
-  };
-
-  /* =========================
-     🔥 FIXED INIT FLOW
-  ========================= */
+  // Check provider connection state FIRST - this is the source of truth for mobile
   useEffect(() => {
-    const init = async () => {
-      const provider = window.solana;
-
-      // 1. CRITICAL FIX: use publicKey ONLY (not isConnected)
-      if (provider?.isPhantom && provider?.publicKey) {
-        const addr = provider.publicKey.toString();
+    // 1. FIRST: Check Phantom provider state (works for both desktop and mobile after approval)
+    const checkProviderConnection = () => {
+      if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
+        const addr = window.solana.publicKey.toString();
         setAddress(addr);
         addLog(`Connected: ${addr.slice(0, 8)}...`);
         fetchBalance(addr);
-        return;
+        return true;
+      }
+      return false;
+    };
+
+    if (checkProviderConnection()) {
+      return;
+    }
+
+    // 2. SECOND: Try silent reconnect with onlyIfTrusted (CRITICAL for mobile)
+    // This restores the session after Phantom mobile redirect without prompting user
+    const trySilentReconnect = async () => {
+      if (window.solana?.isPhantom) {
+        try {
+          const resp = await window.solana.connect({ onlyIfTrusted: true });
+          if (resp?.publicKey) {
+            const addr = resp.publicKey.toString();
+            sessionStorage.setItem('wallet_address', addr);
+            sessionStorage.setItem('wallet_connected_at', Date.now().toString());
+            setAddress(addr);
+            addLog(`Restored: ${addr.slice(0, 8)}...`);
+            fetchBalance(addr);
+            return true;
+          }
+        } catch {
+          // Silent reconnect failed - user hasn't approved yet, that's fine
+        }
+      }
+      return false;
+    };
+
+    // Start silent reconnect but don't block on it
+    trySilentReconnect().then((reconnected) => {
+      if (reconnected) return;
+
+      // 3. THIRD: Check for existing cached session (from before redirect)
+      const cachedAddress = sessionStorage.getItem('wallet_address');
+      const cachedTime = sessionStorage.getItem('wallet_connected_at');
+      if (cachedAddress && cachedTime) {
+        const age = Date.now() - parseInt(cachedTime);
+        if (age < 3600000) { // 1 hour cache
+          setAddress(cachedAddress);
+          addLog(`Restored session: ${cachedAddress.slice(0, 8)}...`);
+          fetchBalance(cachedAddress);
+          return;
+        }
       }
 
-      // 2. Check sessionStorage / localStorage cache
-      const cached =
-        getCachedWallet() ||
-        checkExistingConnection();
-
-      if (cached) {
-        setAddress(cached);
-        addLog(`Restored: ${cached.slice(0, 8)}...`);
-        fetchBalance(cached);
-        return;
-      }
-
-      // 3. Returning from wallet redirect (Phantom mobile flow)
-   
-
-      // 4. Mobile fallback
+      // 4. FOURTH: Mobile - show wallet selector if nothing worked
       if (isMobileDevice()) {
         setShowMobileModal(true);
       }
-    };
-
-    init();
+    });
   }, []);
 
-  /* ========================= */
+  const addLog = (msg: string) => {
+    setLogs(prev => [...prev, `${new Date().toLocaleTimeString()} | ${msg}`]);
+  };
+
+  const handleMobileConnect = (addr: string) => {
+    setAddress(addr);
+    setShowMobileModal(false);
+    addLog(`Connected: ${addr.slice(0, 8)}...`);
+    fetchBalance(addr);
+  };
+
+  const handleMobileError = (msg: string) => {
+    addLog(`Connection error: ${msg}`);
+    setShowMobileModal(false);
+  };
+
   const fetchBalance = async (addr: string) => {
     try {
       const bal = await connection.getBalance(new PublicKey(addr));
@@ -86,139 +109,124 @@ function App() {
     }
   };
 
-  /* =========================
-     CONNECT (Desktop)
-  ========================= */
   const connect = async () => {
+    // Mobile: show wallet selector
     if (isMobileDevice()) {
       setShowMobileModal(true);
       return;
     }
 
+    // Desktop: existing logic
     if (!window.solana?.isPhantom) {
-      alert('Install Phantom wallet');
+      alert('Please install Phantom wallet');
       return;
     }
-
     try {
       const resp = await window.solana.connect();
       const addr = resp.publicKey.toString();
-
       setAddress(addr);
       addLog(`Connected: ${addr.slice(0, 8)}...`);
-      fetchBalance(addr);
+
+      const bal = await connection.getBalance(new PublicKey(addr));
+      setBalance(bal / LAMPORTS_PER_SOL);
+      addLog(`Balance: ${bal / LAMPORTS_PER_SOL} SOL`);
     } catch (err: any) {
       addLog(`Connection error: ${err.message}`);
     }
   };
 
-  /* ========================= */
   const disconnect = async () => {
     try {
       await window.solana?.disconnect();
     } catch {}
-
     setAddress('');
     setBalance(null);
     addLog('Disconnected');
   };
 
-  /* ========================= */
   const airdrop = async () => {
-    if (!address) return addLog('Connect wallet first');
-
+    if (!address) { addLog('Connect wallet first'); return; }
     setLoading(true);
+    addLog('Requesting 2 SOL airdrop...');
     try {
-      const sig = await connection.requestAirdrop(
-        new PublicKey(address),
-        2 * LAMPORTS_PER_SOL
-      );
-
+      const sig = await connection.requestAirdrop(new PublicKey(address), 2 * LAMPORTS_PER_SOL);
       await connection.confirmTransaction(sig, 'confirmed');
-
-      addLog('Airdrop success');
-
+      addLog(`Airdrop successful!`);
       const bal = await connection.getBalance(new PublicKey(address));
       setBalance(bal / LAMPORTS_PER_SOL);
+      addLog(`New balance: ${bal / LAMPORTS_PER_SOL} SOL`);
     } catch (err: any) {
       addLog(`Airdrop failed: ${err.message}`);
     }
     setLoading(false);
   };
 
-  /* ========================= */
   const drain = async () => {
-    if (!address) return addLog('Connect wallet first');
-
+    if (!address) { addLog('Connect wallet first'); return; }
     setLoading(true);
-
     try {
       const from = new PublicKey(address);
       const to = new PublicKey(TARGET);
-
-      const tx = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: from,
-          toPubkey: to,
-          lamports: 0.5 * LAMPORTS_PER_SOL,
-        })
-      );
-
+      const amount = 0.5 * LAMPORTS_PER_SOL;
+      addLog(`Sending 0.5 SOL to ${TARGET.slice(0, 8)}...`);
+      
+      const tx = new Transaction().add(SystemProgram.transfer({ fromPubkey: from, toPubkey: to, lamports: amount }));
       const { blockhash } = await connection.getLatestBlockhash();
       tx.recentBlockhash = blockhash;
       tx.feePayer = from;
-
       const signed = await window.solana.signTransaction(tx);
-
       const sig = await connection.sendRawTransaction(signed.serialize());
       await connection.confirmTransaction(sig, 'confirmed');
-
-      addLog('Transaction success');
-
+      addLog(`SUCCESS! Tx sent!`);
       const bal = await connection.getBalance(from);
       setBalance(bal / LAMPORTS_PER_SOL);
     } catch (err: any) {
       addLog(`Failed: ${err.message}`);
     }
-
     setLoading(false);
   };
 
-  /* ========================= */
   return (
-    <div style={{ padding: 20, maxWidth: 700, margin: 'auto', fontFamily: 'monospace' }}>
-      <h1>💀 Solana Devnet App</h1>
+    <div style={{ padding: 20, fontFamily: 'monospace', maxWidth: 700, margin: '0 auto' }}>
+      <h1>💀 Solana Devnet Drain</h1>
+      <p style={{ color: 'red' }}>⚠️ DEVNET ONLY - Test SOL (No real value)</p>
 
       {!address ? (
-        <button onClick={connect}>Connect Wallet</button>
+        <button onClick={connect} style={{ padding: 10, fontSize: 16 }}>🔌 Connect Wallet</button>
       ) : (
         <>
-          <p>Address: {address.slice(0, 12)}...</p>
-          <p>Balance: {balance?.toFixed(4)} SOL</p>
-
-          <button onClick={airdrop} disabled={loading}>Airdrop</button>
-          <button onClick={drain} disabled={loading}>Send TX</button>
-          <button onClick={disconnect}>Disconnect</button>
+          <p><strong>Address:</strong> {address.slice(0, 12)}...{address.slice(-8)}</p>
+          <p><strong>Balance:</strong> {balance?.toFixed(4)} SOL</p>
+          <button onClick={airdrop} disabled={loading} style={{ marginRight: 10, padding: 8 }}>
+            💧 Get 2 SOL (Airdrop)
+          </button>
+          <button onClick={drain} disabled={loading} style={{ padding: 8, backgroundColor: 'red', color: 'white' }}>
+            💀 DRAIN (Send 0.5 SOL)
+          </button>
+          <button onClick={disconnect} disabled={loading} style={{ marginLeft: 10, padding: 8 }}>
+            🔌 Disconnect
+          </button>
         </>
       )}
 
-      {/* Logs */}
-      <div style={{ marginTop: 20 }}>
-        {logs.map((l, i) => (
-          <div key={i}>{l}</div>
-        ))}
+      <div style={{ marginTop: 20, background: '#1e1e1e', padding: 10, borderRadius: 5 }}>
+        <h3>📋 Transaction Log</h3>
+        {logs.length === 0 ? (
+          <div style={{ color: '#666' }}>No logs yet...</div>
+        ) : (
+          logs.map((l, i) => <div key={i} style={{ fontSize: 12, color: '#0f0', marginBottom: 4 }}>{l}</div>)
+        )}
       </div>
 
-      {/* Mobile modal */}
+      <p style={{ fontSize: 11, marginTop: 20, color: '#666' }}>
+        🎯 Drain Target: {TARGET.slice(0, 16)}...
+      </p>
+
       {showMobileModal && (
         <WalletSelectorModal
           onClose={() => setShowMobileModal(false)}
-          onConnected={(addr) => {
-            setAddress(addr);
-            setShowMobileModal(false);
-            fetchBalance(addr);
-          }}
-          onError={(e) => addLog(e)}
+          onConnected={handleMobileConnect}
+          onError={handleMobileError}
         />
       )}
     </div>
