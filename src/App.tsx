@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { isMobileDevice } from './utils/mobileWallet';
-import { WalletSelectorModal } from './utils/WalletSelectorModal';
+import { isMobileDevice, checkExistingConnection } from './utils/mobileWallet';
+import { WalletSelectorModal, checkReturningFromWallet } from './utils/WalletSelectorModal';
 
 const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
 const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
@@ -21,7 +21,26 @@ function App() {
 
   // Show mobile wallet selector on first load if mobile device detected
   useEffect(() => {
-    if (isMobileDevice() && !window.solana?.isConnected) {
+    // Check if returning from wallet connection
+    const returningAddress = checkReturningFromWallet();
+    if (returningAddress) {
+      setAddress(returningAddress);
+      addLog(`Connected: ${returningAddress.slice(0, 8)}...`);
+      fetchBalance(returningAddress);
+      return;
+    }
+
+    // Check for existing connection
+    const existingAddress = checkExistingConnection();
+    if (existingAddress) {
+      setAddress(existingAddress);
+      addLog(`Connected: ${existingAddress.slice(0, 8)}...`);
+      fetchBalance(existingAddress);
+      return;
+    }
+
+    // Mobile: show wallet selector
+    if (isMobileDevice()) {
       setShowMobileModal(true);
     }
   }, []);

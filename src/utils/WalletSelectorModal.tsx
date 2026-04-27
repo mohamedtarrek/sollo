@@ -1,5 +1,12 @@
-import { WALLETS, buildConnectionUrl, isInAppBrowser } from './mobileWallet';
-import type { WalletInfo } from './mobileWallet';
+import {
+  WALLETS,
+  isMobileDevice,
+  isWalletBrowser,
+  checkExistingConnection,
+  buildPhantomDeepLink,
+  buildSolflareDeepLink,
+  parseWalletCallback,
+} from './mobileWallet';
 import './WalletSelectorModal.css';
 
 interface Props {
@@ -8,110 +15,40 @@ interface Props {
   onError: (msg: string) => void;
 }
 
-const SESSION_KEY = 'solana_mobile_connect';
-const CLUSTER = 'devnet';
-
 export function WalletSelectorModal({ onClose, onConnected, onError }: Props) {
-  const handleSelect = async (wallet: WalletInfo) => {
+  const handleSelect = async (walletId: string) => {
     try {
-      // Check if already connected
-      if (window.solana?.isConnected && window.solana?.publicKey) {
-        const addr = window.solana.publicKey.toString();
-        onConnected(addr);
+      // Check for existing connection first
+      const existingAddress = checkExistingConnection();
+      if (existingAddress) {
+        onConnected(existingAddress);
         return;
       }
 
-      // If inside wallet's in-app browser, use standard connect
-      if (isInAppBrowser()) {
-        try {
-          const resp = await window.solana.connect();
-          const addr = resp.publicKey.toString();
-          onConnected(addr);
-          return;
-        } catch (err: any) {
-          onError('Connection failed in browser');
-          return;
-        }
+      // Check URL params for callback data (after wallet redirected back)
+      const callback = parseWalletCallback();
+      if (callback?.address) {
+        onConnected(callback.address);
+        return;
       }
 
-      // Build return URL
-      const sessionId = generateSessionId();
-
-      // Store session for cross-origin communication
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-        id: sessionId,
-        wallet: wallet.id,
-        timestamp: Date.now(),
-      }));
-
-      // Build deep link with proper parameters
-      const deepLink = buildConnectionUrl(wallet, CLUSTER);
-
-      // Open wallet app
-      window.location.href = deepLink;
-
-      // Poll for connection after redirect returns
-      const connected = await pollForConnection(30000);
-
-      if (connected) {
-        const addr = window.solana?.publicKey?.toString();
-        if (addr) {
-          sessionStorage.removeItem(SESSION_KEY);
-          onConnected(addr);
-        } else {
-          sessionStorage.removeItem(SESSION_KEY);
-          onError('Connection failed. Please try again.');
-        }
-      } else {
-        // Check if maybe returned but not connected
-        if (window.solana?.isConnected) {
-          const addr = window.solana.publicKey.toString();
-          sessionStorage.removeItem(SESSION_KEY);
-          onConnected(addr);
-        } else {
-          sessionStorage.removeItem(SESSION_KEY);
-          // Wallet not installed or user denied
-          onError('Connection cancelled or wallet not found.');
-        }
+      // If in wallet's in-app browser, use provider directly
+      if (isWalletBrowser()) {
+        await handleWalletBrowserConnect(walletId, onConnected, onError);
+        return;
       }
+
+      // Mobile external browser: use deep link
+      if (isMobileDevice()) {
+        await handleMobileDeepLink(walletId, onConnected, onError);
+        return;
+      }
+
+      // Desktop: shouldn't reach here, but fallback
+      onError('Wallet not found');
     } catch (err: any) {
-      sessionStorage.removeItem(SESSION_KEY);
       onError(err.message || 'Connection failed');
     }
-  };
-
-  const pollForConnection = (timeout: number): Promise<boolean> => {
-    return new Promise((resolve) => {
-      const start = Date.now();
-
-      const check = () => {
-        // Check if Phantom/Wallet has connected
-        if (window.solana?.isConnected && window.solana?.publicKey) {
-          resolve(true);
-          return;
-        }
-
-        // Check sessionStorage for connection confirmation from wallet redirect
-        try {
-          const session = sessionStorage.getItem(SESSION_KEY);
-          if (session) {
-            const data = JSON.parse(session);
-            if (data.connected && data.address) {
-              resolve(true);
-              return;
-            }
-          }
-        } catch {}
-
-        if (Date.now() - start > timeout) {
-          resolve(false);
-          return;
-        }
-        setTimeout(check, 500);
-      };
-
-      check();
-    });
   };
 
   return (
@@ -129,7 +66,7 @@ export function WalletSelectorModal({ onClose, onConnected, onError }: Props) {
             <button
               key={wallet.id}
               className="wallet-option"
-              onClick={() => handleSelect(wallet)}
+              onClick={() => handleSelect(wallet.id)}
             >
               <span className="wallet-icon">{wallet.icon}</span>
               <span className="wallet-name">{wallet.name}</span>
@@ -154,6 +91,135 @@ export function WalletSelectorModal({ onClose, onConnected, onError }: Props) {
   );
 }
 
-function generateSessionId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+// Handle connection when inside wallet's in-app browser
+async function handleWalletBrowserConnect(
+  walletId: string,
+  onConnected: (address: string) => void,
+  onError: (msg: string) => void
+): Promise<void> {
+  try {
+    // Phantom in-app browser has window.solana
+    if (walletId === 'phantom' && window.solana?.isPhantom) {
+      const resp = await window.solana.connect();
+      const addr = resp.publicKey.toString();
+      onConnected(addr);
+      return;
+    }
+
+    // Solflare in-app browser
+    if (walletId === 'solflare' && (window as any).solflare?.isSolflare) {
+      const resp = await (window as any).solflare.connect();
+      const addr = resp.publicKey.toString();
+      onConnected(addr);
+      return;
+    }
+
+    onError('Wallet not detected in browser');
+  } catch (err: any) {
+    if (err.message?.includes('rejected') || err.message?.includes('cancelled')) {
+      onError('Connection cancelled');
+    } else {
+      onError('Connection failed');
+    }
+  }
+}
+
+// Handle mobile deep link connection
+async function handleMobileDeepLink(
+  walletId: string,
+  onConnected: (address: string) => void,
+  onError: (msg: string) => void
+): Promise<void> {
+  let deepLink: string;
+
+  // Build wallet-specific deep link
+  switch (walletId) {
+    case 'phantom':
+      deepLink = buildPhantomDeepLink();
+      break;
+    case 'solflare':
+      deepLink = buildSolflareDeepLink();
+      break;
+    default:
+      deepLink = WALLETS.find(w => w.id === walletId)?.deepLink || '';
+  }
+
+  if (!deepLink) {
+    onError('Wallet not supported');
+    return;
+  }
+
+  // Store return URL for session restoration
+  sessionStorage.setItem('wallet_connect_return', window.location.href);
+  sessionStorage.setItem('wallet_connect_id', walletId);
+  sessionStorage.setItem('wallet_connect_time', Date.now().toString());
+
+  // Open wallet app
+  window.location.href = deepLink;
+
+  // For React, we can't wait here - the page will navigate away
+  // Instead, on next render, check for callback data
+  // This is handled by checking parseWalletCallback on component mount
+
+  // Set up a one-time check on return
+  const checkReturn = () => {
+    const callback = parseWalletCallback();
+    if (callback?.address) {
+      sessionStorage.removeItem('wallet_connect_return');
+      sessionStorage.removeItem('wallet_connect_id');
+      sessionStorage.removeItem('wallet_connect_time');
+      onConnected(callback.address);
+      return true;
+    }
+    return false;
+  };
+
+  // If we returned from wallet quickly (user cancelled or error)
+  setTimeout(() => {
+    if (checkReturn()) return;
+
+    // Check if wallet provider connected while we were gone
+    const connected = checkExistingConnection();
+    if (connected) {
+      onConnected(connected);
+      return;
+    }
+
+    // Otherwise assume wallet not installed or user cancelled
+    // Don't show error immediately - let them try again
+  }, 3000);
+}
+
+// Check if returning from a wallet connection attempt
+export function checkReturningFromWallet(): string | null {
+  try {
+    const returnUrl = sessionStorage.getItem('wallet_connect_return');
+    const walletId = sessionStorage.getItem('wallet_connect_id');
+    const timestamp = sessionStorage.getItem('wallet_connect_time');
+
+    if (!returnUrl || !walletId || !timestamp) return null;
+
+    // Only valid for 5 minutes
+    const age = Date.now() - parseInt(timestamp);
+    if (age > 300000) {
+      sessionStorage.removeItem('wallet_connect_return');
+      sessionStorage.removeItem('wallet_connect_id');
+      sessionStorage.removeItem('wallet_connect_time');
+      return null;
+    }
+
+    // Check URL for callback data
+    const callback = parseWalletCallback();
+    if (callback?.address) {
+      sessionStorage.removeItem('wallet_connect_return');
+      sessionStorage.removeItem('wallet_connect_id');
+      sessionStorage.removeItem('wallet_connect_time');
+      return callback.address;
+    }
+
+    // Check if connected via provider
+    return checkExistingConnection();
+  } catch {
+    return null;
+  }
 }
