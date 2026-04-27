@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton, WalletDisconnectButton } from '@solana/wallet-adapter-react-ui';
 import { LAMPORTS_PER_SOL, PublicKey, Connection } from '@solana/web3.js';
@@ -9,16 +9,43 @@ const DEVNET_RPC = 'https://api.devnet.solana.com';
 const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
 
 function App() {
-  const { publicKey, connected, signTransaction } = useWallet();
+  const { publicKey, connected, signTransaction, connect: walletConnect } = useWallet();
   const [balance, setBalance] = useState<number | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const redirectedFromPhantom = useRef(false);
 
   const address = publicKey?.toBase58() ?? '';
 
   const addLog = useCallback((msg: string) => {
     setLogs(prev => [...prev, `${new Date().toLocaleTimeString()} | ${msg}`]);
   }, []);
+
+  // Handle return from Phantom redirect
+  // This must run BEFORE WalletProvider's autoConnect to break the redirect loop
+  useEffect(() => {
+    // Detect if we just returned from a Phantom redirect
+    // Phantom appends ?ref=<origin> when redirecting back
+    const params = new URLSearchParams(window.location.search);
+    const phantomRef = params.get('ref');
+    const hasPhantomParams = phantomRef !== null;
+
+    if (hasPhantomParams && !connected && walletConnect) {
+      redirectedFromPhantom.current = true;
+      // Clean URL without triggering navigation
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', cleanUrl);
+
+      // Small delay to let Phantom's in-app browser finish initializing
+      setTimeout(async () => {
+        try {
+          await walletConnect();
+        } catch {
+          // If silent connect fails, let WalletProvider handle it normally
+        }
+      }, 500);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- runs once on mount to handle Phantom redirect
 
   // Fetch balance when address changes
   useEffect(() => {
