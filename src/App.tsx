@@ -1,13 +1,7 @@
-import { Buffer } from 'buffer';
 import { useState, useEffect } from 'react';
 import { Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { isMobileDevice } from './utils/mobileWallet';
 import { WalletSelectorModal } from './utils/WalletSelectorModal';
-
-// Polyfill Buffer for browser environment
-if (typeof window !== 'undefined') {
-  (window as any).Buffer = Buffer;
-}
 
 const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
 const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
