@@ -4,7 +4,8 @@
       "Bash(npm run *)",
       "Bash(npm install *)",
       "WebSearch",
-      "WebFetch(domain:docs.phantom.com)"
+      "WebFetch(domain:docs.phantom.com)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
