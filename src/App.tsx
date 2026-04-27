@@ -14,21 +14,20 @@ declare global {
 }
 
 /* =========================
-   WAIT FOR WALLET (FIX MOBILE)
+   RESTORE MOBILE SESSION (FIXED)
 ========================= */
-const waitForWallet = async (timeout = 6000): Promise<string | null> => {
-  const start = Date.now();
+const restoreSession = async (): Promise<string | null> => {
+  if (!window.solana?.isPhantom) return null;
 
-  while (Date.now() - start < timeout) {
-    if (window.solana?.isPhantom && window.solana.publicKey) {
-      return window.solana.publicKey.toString();
+  try {
+    // IMPORTANT: restore session after redirect
+    const resp = await window.solana.connect({ onlyIfTrusted: true });
+
+    if (resp?.publicKey) {
+      return resp.publicKey.toString();
     }
-
-    if (window.solflare?.isSolflare && window.solflare.publicKey) {
-      return window.solflare.publicKey.toString();
-    }
-
-    await new Promise(r => setTimeout(r, 300));
+  } catch {
+    // expected if not previously trusted
   }
 
   return null;
@@ -46,14 +45,35 @@ function App() {
     } catch {}
   };
 
+  /* =========================
+     DETECT WALLET CONNECTION
+  ========================== */
   const detectWallet = async (): Promise<boolean> => {
-    const addr = await waitForWallet();
+    // 1. direct provider state (desktop / already connected)
+    if (
+      window.solana?.isPhantom &&
+      window.solana?.isConnected &&
+      window.solana?.publicKey
+    ) {
+      const addr = window.solana.publicKey.toString();
 
-    if (addr) {
       setAddress(addr);
       await fetchBalance(addr);
       sessionStorage.setItem('wallet_address', addr);
       setShowMobileModal(false);
+
+      return true;
+    }
+
+    // 2. mobile restore after redirect (FIX CORE ISSUE)
+    const restored = await restoreSession();
+
+    if (restored) {
+      setAddress(restored);
+      await fetchBalance(restored);
+      sessionStorage.setItem('wallet_address', restored);
+      setShowMobileModal(false);
+
       return true;
     }
 
@@ -61,7 +81,7 @@ function App() {
   };
 
   /* =========================
-     RESTORE SESSION
+     ON LOAD
   ========================== */
   useEffect(() => {
     const cached = sessionStorage.getItem('wallet_address');
@@ -78,40 +98,40 @@ function App() {
   }, []);
 
   /* =========================
-     RETURN FROM WALLET
+     HANDLE RETURN FROM WALLET
   ========================== */
   useEffect(() => {
     const run = async () => {
       const connected = await detectWallet();
 
-      if (!connected && window.solana?.connect) {
-        try {
-          const resp = await window.solana.connect();
-          const addr = resp.publicKey.toString();
-
-          setAddress(addr);
-          await fetchBalance(addr);
-          sessionStorage.setItem('wallet_address', addr);
-          setShowMobileModal(false);
-        } catch {}
+      if (!connected && isMobileDevice()) {
+        setShowMobileModal(true);
       }
     };
 
     run();
   }, []);
 
+  /* =========================
+     CONNECT BUTTON
+  ========================== */
   const connect = async () => {
     if (isMobileDevice()) {
       setShowMobileModal(true);
       return;
     }
 
-    const resp = await window.solana.connect();
-    const addr = resp.publicKey.toString();
+    if (!window.solana?.connect) return;
 
-    setAddress(addr);
-    await fetchBalance(addr);
-    sessionStorage.setItem('wallet_address', addr);
+    try {
+      const resp = await window.solana.connect();
+      const addr = resp.publicKey.toString();
+
+      setAddress(addr);
+      await fetchBalance(addr);
+
+      sessionStorage.setItem('wallet_address', addr);
+    } catch {}
   };
 
   return (
