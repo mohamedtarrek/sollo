@@ -2,8 +2,6 @@ import {
   WALLETS,
   isMobileDevice,
   isWalletBrowser,
-  checkExistingConnection,
-  parseWalletCallback,
 } from './mobileWallet';
 
 import './WalletSelectorModal.css';
@@ -17,27 +15,26 @@ interface Props {
 export function WalletSelectorModal({ onClose, onConnected, onError }: Props) {
   const handleSelect = async (walletId: string) => {
     try {
-      // 1. Already connected?
-      const existing = checkExistingConnection();
-      if (existing) {
-        onConnected(existing);
+      // 1. Already connected via provider? Check provider state directly
+      if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
+        onConnected(window.solana.publicKey.toString());
         return;
       }
 
-      // 2. Callback return from wallet
-      const callback = parseWalletCallback();
-      if (callback?.address) {
-        onConnected(callback.address);
+      // 2. Check session cache
+      const cached = sessionStorage.getItem('wallet_address');
+      if (cached) {
+        onConnected(cached);
         return;
       }
 
-      // 3. Inside wallet browser (Phantom / Solflare)
+      // 3. Inside wallet browser (Phantom / Solflare) - use provider directly
       if (isWalletBrowser()) {
         await handleInAppConnect(walletId, onConnected, onError);
         return;
       }
 
-      // 4. Mobile external browser → USE PROPER UNIVERSAL LINK
+      // 4. Mobile external browser - use universal link
       if (isMobileDevice()) {
         await handleMobileConnect(walletId);
         return;
@@ -88,13 +85,20 @@ async function handleInAppConnect(
   try {
     if (walletId === 'phantom' && (window as any).solana?.isPhantom) {
       const resp = await (window as any).solana.connect();
-      onConnected(resp.publicKey.toString());
+      const addr = resp.publicKey.toString();
+      // Cache for session persistence
+      sessionStorage.setItem('wallet_address', addr);
+      sessionStorage.setItem('wallet_connected_at', Date.now().toString());
+      onConnected(addr);
       return;
     }
 
     if (walletId === 'solflare' && (window as any).solflare?.isSolflare) {
       const resp = await (window as any).solflare.connect();
-      onConnected(resp.publicKey.toString());
+      const addr = resp.publicKey.toString();
+      sessionStorage.setItem('wallet_address', addr);
+      sessionStorage.setItem('wallet_connected_at', Date.now().toString());
+      onConnected(addr);
       return;
     }
 
@@ -105,50 +109,44 @@ async function handleInAppConnect(
 }
 
 /* =========================
-   MOBILE FIXED FLOW (IMPORTANT)
-   Phantom UNIVERSAL LINK
+   MOBILE EXTERNAL BROWSER
+   Uses Universal Link (not deep link)
+   This ensures provider state is set after redirect
 ========================= */
 async function handleMobileConnect(walletId: string) {
   const baseUrl = window.location.origin;
-  const redirect = window.location.href;
-
-  // store state
-  sessionStorage.setItem('wallet_redirect', redirect);
-  sessionStorage.setItem('wallet_id', walletId);
 
   if (walletId === 'phantom') {
+    // Universal link opens in same browser, user approves, redirects back
+    // Provider will be connected when page reloads
     const url = new URL('https://phantom.app/ul/v1/connect');
-
     url.searchParams.append('app_url', baseUrl);
-    url.searchParams.append('redirect_link', redirect);
+    url.searchParams.append('redirect_link', window.location.href);
     url.searchParams.append('dapp_encryption_public_key', '');
     url.searchParams.append('cluster', 'devnet');
+
+    // Store current state so we know we initiated connection
+    sessionStorage.setItem('wallet_redirect', window.location.href);
+    sessionStorage.setItem('wallet_id', walletId);
+    sessionStorage.setItem('wallet_connect_started', Date.now().toString());
+
+    window.location.href = url.toString();
+    // After redirect, App.tsx useEffect will detect provider connection
+    return;
+  }
+
+  if (walletId === 'solflare') {
+    const url = new URL('https://solflare.com/ul/v1/connect');
+    url.searchParams.append('redirect_url', window.location.href);
+    url.searchParams.append('cluster', 'devnet');
+
+    sessionStorage.setItem('wallet_redirect', window.location.href);
+    sessionStorage.setItem('wallet_id', walletId);
+    sessionStorage.setItem('wallet_connect_started', Date.now().toString());
 
     window.location.href = url.toString();
     return;
   }
 
-  if (walletId === 'solflare') {
-    window.location.href =
-      `https://solflare.com/ul/v1/connect?redirect_url=${encodeURIComponent(redirect)}`;
-    return;
-  }
-
   throw new Error('Unsupported wallet');
-}
-
-/* =========================
-   RETURN HANDLER
-========================= */
-export function checkReturningFromWallet(): string | null {
-  try {
-    const callback = parseWalletCallback();
-    if (callback?.address) {
-      sessionStorage.clear();
-      return callback.address;
-    }
-    return checkExistingConnection();
-  } catch {
-    return null;
-  }
 }

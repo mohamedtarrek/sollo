@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { isMobileDevice, checkExistingConnection } from './utils/mobileWallet';
-import { WalletSelectorModal, checkReturningFromWallet } from './utils/WalletSelectorModal';
+import { isMobileDevice } from './utils/mobileWallet';
+import { WalletSelectorModal } from './utils/WalletSelectorModal';
 
 const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
 const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
@@ -19,27 +19,38 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [showMobileModal, setShowMobileModal] = useState(false);
 
-  // Show mobile wallet selector on first load if mobile device detected
+  // Check provider connection state FIRST - this is the source of truth for mobile
   useEffect(() => {
-    // Check if returning from wallet connection
-    const returningAddress = checkReturningFromWallet();
-    if (returningAddress) {
-      setAddress(returningAddress);
-      addLog(`Connected: ${returningAddress.slice(0, 8)}...`);
-      fetchBalance(returningAddress);
+    // 1. FIRST: Check Phantom provider state (works for both desktop and mobile after approval)
+    const checkProviderConnection = () => {
+      if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
+        const addr = window.solana.publicKey.toString();
+        setAddress(addr);
+        addLog(`Connected: ${addr.slice(0, 8)}...`);
+        fetchBalance(addr);
+        return true;
+      }
+      return false;
+    };
+
+    if (checkProviderConnection()) {
       return;
     }
 
-    // Check for existing connection
-    const existingAddress = checkExistingConnection();
-    if (existingAddress) {
-      setAddress(existingAddress);
-      addLog(`Connected: ${existingAddress.slice(0, 8)}...`);
-      fetchBalance(existingAddress);
-      return;
+    // 2. SECOND: Check for existing cached session (localStorage for persistence)
+    const cachedAddress = sessionStorage.getItem('wallet_address');
+    const cachedTime = sessionStorage.getItem('wallet_connected_at');
+    if (cachedAddress && cachedTime) {
+      const age = Date.now() - parseInt(cachedTime);
+      if (age < 3600000) { // 1 hour cache
+        setAddress(cachedAddress);
+        addLog(`Restored session: ${cachedAddress.slice(0, 8)}...`);
+        fetchBalance(cachedAddress);
+        return;
+      }
     }
 
-    // Mobile: show wallet selector
+    // 3. THIRD: Mobile - show wallet selector
     if (isMobileDevice()) {
       setShowMobileModal(true);
     }

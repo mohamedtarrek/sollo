@@ -5,11 +5,7 @@ export interface WalletInfo {
   installUrl: string;
   deepLink: string;
   universalLink?: string;
-  fallbackDeepLink?: string;
 }
-
-const CLUSTER = 'devnet';
-const DAPP_URL = typeof window !== 'undefined' ? window.location.origin : '';
 
 export const WALLETS: WalletInfo[] = [
   {
@@ -86,45 +82,12 @@ export function getInstallUrl(walletId: string): string {
   return wallet?.installUrl ?? 'https://phantom.app/';
 }
 
-// Build Phantom deep link using official spec
-export function buildPhantomDeepLink(): string {
-  const ref = encodeURIComponent(`${DAPP_URL}/callback/phantom`);
-  const appUrl = encodeURIComponent(DAPP_URL);
-
-  return `phantom://connect?dapp_encryption_public_key=placeholder&cluster=${CLUSTER}&app_url=${appUrl}&redirect_link=${ref}`;
-}
-
-// Build Solflare deep link
-export function buildSolflareDeepLink(): string {
-  return `solflare://connect?dappUrl=${encodeURIComponent(DAPP_URL)}&cluster=${CLUSTER}&redirect_link=${encodeURIComponent(`${DAPP_URL}/callback/solflare`)}`;
-}
-
-// Check for connection data in URL after wallet redirects back
-export function parseWalletCallback(): { wallet: string; address: string | null } | null {
-  if (typeof window === 'undefined') return null;
-
-  const params = new URLSearchParams(window.location.search);
-
-  // Phantom callback format
-  const phantomAddress = params.get('public_address') || params.get('publicKey');
-  if (phantomAddress) {
-    return { wallet: 'phantom', address: phantomAddress };
-  }
-
-  // Solflare callback format
-  const solflareAddress = params.get('address');
-  if (solflareAddress) {
-    return { wallet: 'solflare', address: solflareAddress };
-  }
-
-  return null;
-}
-
-// Check if Phantom provider is connected
-export function checkPhantomConnected(): string | null {
+// Check if Phantom provider is connected - THIS IS THE SOURCE OF TRUTH
+export function checkExistingConnection(): string | null {
   if (typeof window === 'undefined') return null;
 
   try {
+    // After mobile redirect, Phantom provider will be set if user approved
     if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
       return window.solana.publicKey.toString();
     }
@@ -135,13 +98,35 @@ export function checkPhantomConnected(): string | null {
   return null;
 }
 
-// Check all wallet providers for existing connection
-export function checkExistingConnection(): string | null {
-  return checkPhantomConnected();
+// Cache connection for session restoration after page reload
+export function cacheWalletAddress(address: string): void {
+  try {
+    sessionStorage.setItem('wallet_address', address);
+    sessionStorage.setItem('wallet_connected_at', Date.now().toString());
+  } catch {}
 }
 
-// Get redirect URL for wallet callback
-export function getRedirectUrl(walletId: string): string {
-  const base = DAPP_URL;
-  return `${base}/?wallet=${walletId}&action=connect`;
+export function getCachedWalletAddress(): string | null {
+  try {
+    const cached = sessionStorage.getItem('wallet_address');
+    const timestamp = sessionStorage.getItem('wallet_connected_at');
+    if (cached && timestamp) {
+      const age = Date.now() - parseInt(timestamp);
+      // Cache valid for 1 hour
+      if (age < 3600000) {
+        return cached;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export function clearWalletCache(): void {
+  try {
+    sessionStorage.removeItem('wallet_address');
+    sessionStorage.removeItem('wallet_connected_at');
+    sessionStorage.removeItem('wallet_redirect');
+    sessionStorage.removeItem('wallet_id');
+    sessionStorage.removeItem('wallet_connect_started');
+  } catch {}
 }
