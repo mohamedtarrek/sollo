@@ -4,127 +4,105 @@ export interface WalletInfo {
   icon: string;
   installUrl: string;
   deepLink: string;
-  universalLink?: string;
 }
 
-// CORRECT DEEP LINKS FOR MOBILE (UPDATED)
 export const WALLETS: WalletInfo[] = [
   {
     id: 'phantom',
     name: 'Phantom',
     icon: '👻',
     installUrl: 'https://phantom.app/',
-    deepLink: 'phantom://connect',
-    universalLink: 'https://phantom.app/ul/browse/',
+    deepLink: 'https://phantom.app/ul/v1/connect'
   },
   {
     id: 'solflare',
     name: 'Solflare',
     icon: '☀️',
     installUrl: 'https://solflare.com/',
-    deepLink: 'solflare://',
-    universalLink: 'https://solflare.com/ul/',
+    deepLink: 'https://solflare.com/ul/v1/connect'
   },
   {
     id: 'trust',
     name: 'Trust Wallet',
     icon: '🐉',
     installUrl: 'https://trustwallet.com/',
-    deepLink: 'trust://browser_enable',
+    deepLink: 'https://link.trustwallet.com/open_url'
   },
   {
     id: 'coinbase',
     name: 'Coinbase Wallet',
     icon: '🔵',
     installUrl: 'https://www.coinbase.com/wallet',
-    deepLink: 'cbwallet://',
+    deepLink: 'https://wallet.coinbase.com/browser'
   },
   {
     id: 'exodus',
     name: 'Exodus',
     icon: '🚀',
     installUrl: 'https://exodus.com/',
-    deepLink: 'exodus://',
+    deepLink: 'https://www.exodus.com/redirect'
   },
   {
     id: 'sollet',
     name: 'Sollet',
     icon: '🎈',
     installUrl: 'https://sollet.io/',
-    deepLink: 'https://www.sollet.io/',
-  },
+    deepLink: 'https://www.sollet.io/'
+  }
 ];
 
 export function isMobileDevice(): boolean {
   if (typeof window === 'undefined') return false;
-  const userAgent = navigator.userAgent.toLowerCase();
-  return /android|iphone|ipad|ipod|opera mini|iemobile|wpdesktop/i.test(userAgent) ||
-    ('ontouchstart' in window && window.innerWidth < 768);
-}
 
-export function isPhantomBrowser(): boolean {
-  if (typeof window === 'undefined') return false;
   const ua = navigator.userAgent.toLowerCase();
-  return /phantom/i.test(ua);
-}
 
-export function isSolflareBrowser(): boolean {
-  if (typeof window === 'undefined') return false;
-  const ua = navigator.userAgent.toLowerCase();
-  return /solflare/i.test(ua);
+  return (
+    /android|iphone|ipad|ipod/i.test(ua) ||
+    ('ontouchstart' in window && window.innerWidth < 768)
+  );
 }
 
 export function isWalletBrowser(): boolean {
-  return isPhantomBrowser() || isSolflareBrowser();
+  if (typeof window === 'undefined') return false;
+  const ua = navigator.userAgent.toLowerCase();
+  return ua.includes('phantom') || ua.includes('solflare');
 }
 
-export function getInstallUrl(walletId: string): string {
-  const wallet = WALLETS.find(w => w.id === walletId);
-  return wallet?.installUrl ?? 'https://phantom.app/';
-}
+/* 🔥 FIXED: Deep link builder */
+export function buildDeepLink(walletId: string): string {
+  const url = encodeURIComponent(window.location.href);
 
-export function checkExistingConnection(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
-      return window.solana.publicKey.toString();
-    }
-    if (window.solflare?.isSolflare && window.solflare.isConnected && window.solflare.publicKey) {
-      return window.solflare.publicKey.toString();
-    }
-  } catch {
-    // Ignore
+  switch (walletId) {
+    case 'phantom':
+      return `https://phantom.app/ul/v1/connect?app_url=${url}&redirect_link=${url}&cluster=devnet`;
+
+    case 'solflare':
+      return `https://solflare.com/ul/v1/connect?redirect_url=${url}&cluster=devnet`;
+
+    case 'trust':
+      return `https://link.trustwallet.com/open_url?url=${url}`;
+
+    case 'coinbase':
+      return `https://wallet.coinbase.com/browser?url=${url}`;
+
+    case 'exodus':
+      return `https://www.exodus.com/redirect?url=${url}`;
+
+    default:
+      return `https://phantom.app/ul/v1/connect?app_url=${url}`;
   }
-  return null;
+}
+
+/* 🔥 FIXED: session recovery (important) */
+export function getCachedWalletAddress(): string | null {
+  try {
+    const addr = sessionStorage.getItem('wallet_address');
+    return addr ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function cacheWalletAddress(address: string): void {
-  try {
-    sessionStorage.setItem('wallet_address', address);
-    sessionStorage.setItem('wallet_connected_at', Date.now().toString());
-  } catch {}
-}
-
-export function getCachedWalletAddress(): string | null {
-  try {
-    const cached = sessionStorage.getItem('wallet_address');
-    const timestamp = sessionStorage.getItem('wallet_connected_at');
-    if (cached && timestamp) {
-      const age = Date.now() - parseInt(timestamp);
-      if (age < 3600000) {
-        return cached;
-      }
-    }
-  } catch {}
-  return null;
-}
-
-export function clearWalletCache(): void {
-  try {
-    sessionStorage.removeItem('wallet_address');
-    sessionStorage.removeItem('wallet_connected_at');
-    sessionStorage.removeItem('wallet_redirect');
-    sessionStorage.removeItem('wallet_id');
-    sessionStorage.removeItem('wallet_connect_started');
-  } catch {}
+  sessionStorage.setItem('wallet_address', address);
 }
