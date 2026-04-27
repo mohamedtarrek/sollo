@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton, WalletDisconnectButton } from '@solana/wallet-adapter-react-ui';
 import { LAMPORTS_PER_SOL, PublicKey, Connection } from '@solana/web3.js';
@@ -13,7 +13,6 @@ function App() {
   const [balance, setBalance] = useState<number | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const redirectedFromPhantom = useRef(false);
 
   const address = publicKey?.toBase58() ?? '';
 
@@ -22,30 +21,26 @@ function App() {
   }, []);
 
   // Handle return from Phantom redirect
-  // This must run BEFORE WalletProvider's autoConnect to break the redirect loop
+  // On iOS, Phantom uses /ul/browse/ which returns with ?ref= parameter
+  // We must call connect() ONCE after return to complete the session
   useEffect(() => {
-    // Detect if we just returned from a Phantom redirect
-    // Phantom appends ?ref=<origin> when redirecting back
     const params = new URLSearchParams(window.location.search);
     const phantomRef = params.get('ref');
-    const hasPhantomParams = phantomRef !== null;
 
-    if (hasPhantomParams && !connected && walletConnect) {
-      redirectedFromPhantom.current = true;
-      // Clean URL without triggering navigation
+    if (phantomRef && !connected && walletConnect) {
+      // Remove the ?ref= param from URL so we don't detect it again on next load
       const cleanUrl = window.location.pathname + window.location.hash;
       window.history.replaceState({}, '', cleanUrl);
 
-      // Small delay to let Phantom's in-app browser finish initializing
-      setTimeout(async () => {
-        try {
-          await walletConnect();
-        } catch {
-          // If silent connect fails, let WalletProvider handle it normally
-        }
-      }, 500);
+      // Give Phantom's in-app browser time to initialize, then call connect
+      // This will NOT redirect again because Phantom remembers the pending session
+      setTimeout(() => {
+        walletConnect().catch(() => {
+          // If connect fails, the user may need to tap connect again
+        });
+      }, 1000);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- runs once on mount to handle Phantom redirect
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch balance when address changes
   useEffect(() => {
