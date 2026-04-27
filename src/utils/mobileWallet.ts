@@ -7,6 +7,7 @@ export interface WalletInfo {
   universalLink?: string;
 }
 
+// CORRECT DEEP LINKS FOR MOBILE (UPDATED)
 export const WALLETS: WalletInfo[] = [
   {
     id: 'phantom',
@@ -14,43 +15,43 @@ export const WALLETS: WalletInfo[] = [
     icon: '👻',
     installUrl: 'https://phantom.app/',
     deepLink: 'phantom://connect',
-    universalLink: 'https://phantom.app/ul/v1/connect',
+    universalLink: 'https://phantom.app/ul/browse/',
   },
   {
     id: 'solflare',
     name: 'Solflare',
     icon: '☀️',
     installUrl: 'https://solflare.com/',
-    deepLink: 'solflare://connect',
-    universalLink: 'https://solflare.com/ul/v1/connect',
+    deepLink: 'solflare://',
+    universalLink: 'https://solflare.com/ul/',
   },
   {
     id: 'trust',
     name: 'Trust Wallet',
     icon: '🐉',
     installUrl: 'https://trustwallet.com/',
-    deepLink: 'trust://connect',
+    deepLink: 'trust://browser_enable',
   },
   {
     id: 'coinbase',
     name: 'Coinbase Wallet',
     icon: '🔵',
-    installUrl: 'https://www.coinbase.com/wallet/downloads',
-    deepLink: 'cbwallet://connect',
+    installUrl: 'https://www.coinbase.com/wallet',
+    deepLink: 'cbwallet://',
   },
   {
     id: 'exodus',
     name: 'Exodus',
     icon: '🚀',
     installUrl: 'https://exodus.com/',
-    deepLink: 'exodus://connect',
+    deepLink: 'exodus://',
   },
   {
     id: 'sollet',
     name: 'Sollet',
     icon: '🎈',
     installUrl: 'https://sollet.io/',
-    deepLink: 'sollet://connect',
+    deepLink: 'https://www.sollet.io/',
   },
 ];
 
@@ -82,23 +83,21 @@ export function getInstallUrl(walletId: string): string {
   return wallet?.installUrl ?? 'https://phantom.app/';
 }
 
-// Check if Phantom provider is connected - THIS IS THE SOURCE OF TRUTH
 export function checkExistingConnection(): string | null {
   if (typeof window === 'undefined') return null;
-
   try {
-    // After mobile redirect, Phantom provider will be set if user approved
     if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
       return window.solana.publicKey.toString();
     }
+    if (window.solflare?.isSolflare && window.solflare.isConnected && window.solflare.publicKey) {
+      return window.solflare.publicKey.toString();
+    }
   } catch {
-    // Ignore errors checking provider
+    // Ignore
   }
-
   return null;
 }
 
-// Cache connection for session restoration after page reload
 export function cacheWalletAddress(address: string): void {
   try {
     sessionStorage.setItem('wallet_address', address);
@@ -112,7 +111,6 @@ export function getCachedWalletAddress(): string | null {
     const timestamp = sessionStorage.getItem('wallet_connected_at');
     if (cached && timestamp) {
       const age = Date.now() - parseInt(timestamp);
-      // Cache valid for 1 hour
       if (age < 3600000) {
         return cached;
       }

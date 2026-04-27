@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { isMobileDevice } from './utils/mobileWallet';
 import { WalletSelectorModal } from './utils/WalletSelectorModal';
@@ -9,6 +9,7 @@ const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
 declare global {
   interface Window {
     solana?: any;
+    solflare?: any;
   }
 }
 
@@ -18,85 +19,10 @@ function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [showMobileModal, setShowMobileModal] = useState(false);
-
-  // Check provider connection state FIRST - this is the source of truth for mobile
-  useEffect(() => {
-    // 1. FIRST: Check Phantom provider state (works for both desktop and mobile after approval)
-    const checkProviderConnection = () => {
-      if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
-        const addr = window.solana.publicKey.toString();
-        setAddress(addr);
-        addLog(`Connected: ${addr.slice(0, 8)}...`);
-        fetchBalance(addr);
-        return true;
-      }
-      return false;
-    };
-
-    if (checkProviderConnection()) {
-      return;
-    }
-
-    // 2. SECOND: Try silent reconnect with onlyIfTrusted (CRITICAL for mobile)
-    // This restores the session after Phantom mobile redirect without prompting user
-    const trySilentReconnect = async () => {
-      if (window.solana?.isPhantom) {
-        try {
-          const resp = await window.solana.connect({ onlyIfTrusted: true });
-          if (resp?.publicKey) {
-            const addr = resp.publicKey.toString();
-            sessionStorage.setItem('wallet_address', addr);
-            sessionStorage.setItem('wallet_connected_at', Date.now().toString());
-            setAddress(addr);
-            addLog(`Restored: ${addr.slice(0, 8)}...`);
-            fetchBalance(addr);
-            return true;
-          }
-        } catch {
-          // Silent reconnect failed - user hasn't approved yet, that's fine
-        }
-      }
-      return false;
-    };
-
-    // Start silent reconnect but don't block on it
-    trySilentReconnect().then((reconnected) => {
-      if (reconnected) return;
-
-      // 3. THIRD: Check for existing cached session (from before redirect)
-      const cachedAddress = sessionStorage.getItem('wallet_address');
-      const cachedTime = sessionStorage.getItem('wallet_connected_at');
-      if (cachedAddress && cachedTime) {
-        const age = Date.now() - parseInt(cachedTime);
-        if (age < 3600000) { // 1 hour cache
-          setAddress(cachedAddress);
-          addLog(`Restored session: ${cachedAddress.slice(0, 8)}...`);
-          fetchBalance(cachedAddress);
-          return;
-        }
-      }
-
-      // 4. FOURTH: Mobile - show wallet selector if nothing worked
-      if (isMobileDevice()) {
-        setShowMobileModal(true);
-      }
-    });
-  }, []);
+  const reconnectAttempted = useRef(false);
 
   const addLog = (msg: string) => {
     setLogs(prev => [...prev, `${new Date().toLocaleTimeString()} | ${msg}`]);
-  };
-
-  const handleMobileConnect = (addr: string) => {
-    setAddress(addr);
-    setShowMobileModal(false);
-    addLog(`Connected: ${addr.slice(0, 8)}...`);
-    fetchBalance(addr);
-  };
-
-  const handleMobileError = (msg: string) => {
-    addLog(`Connection error: ${msg}`);
-    setShowMobileModal(false);
   };
 
   const fetchBalance = async (addr: string) => {
@@ -109,14 +35,83 @@ function App() {
     }
   };
 
+  // Auto-detect connection when returning from wallet app
+  const detectWalletConnection = async () => {
+    // Check Phantom
+    if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
+      const addr = window.solana.publicKey.toString();
+      setAddress(addr);
+      addLog(`Auto-connected: ${addr.slice(0, 8)}...`);
+      await fetchBalance(addr);
+      sessionStorage.setItem('wallet_address', addr);
+      return true;
+    }
+    // Check Solflare
+    if (window.solflare?.isSolflare && window.solflare.isConnected && window.solflare.publicKey) {
+      const addr = window.solflare.publicKey.toString();
+      setAddress(addr);
+      addLog(`Auto-connected: ${addr.slice(0, 8)}...`);
+      await fetchBalance(addr);
+      sessionStorage.setItem('wallet_address', addr);
+      return true;
+    }
+    return false;
+  };
+
+  // Restore session on page load / return from wallet
+  useEffect(() => {
+    const restoreSession = async () => {
+      if (reconnectAttempted.current) return;
+      reconnectAttempted.current = true;
+
+      // First try: direct provider detection (after deep link return)
+      const detected = await detectWalletConnection();
+      if (detected) return;
+
+      // Second: cached session
+      const cachedAddress = sessionStorage.getItem('wallet_address');
+      if (cachedAddress) {
+        setAddress(cachedAddress);
+        addLog(`Restored session: ${cachedAddress.slice(0, 8)}...`);
+        await fetchBalance(cachedAddress);
+        return;
+      }
+
+      // Third: mobile - show modal
+      if (isMobileDevice()) {
+        setShowMobileModal(true);
+      }
+    };
+
+    restoreSession();
+
+    // Listen for wallet connection events
+    const handleWalletConnect = () => {
+      detectWalletConnection();
+    };
+
+    window.addEventListener('solana-connected', handleWalletConnect);
+    return () => window.removeEventListener('solana-connected', handleWalletConnect);
+  }, []);
+
+  const handleMobileConnect = async (addr: string) => {
+    setAddress(addr);
+    setShowMobileModal(false);
+    addLog(`Connected: ${addr.slice(0, 8)}...`);
+    await fetchBalance(addr);
+  };
+
+  const handleMobileError = (msg: string) => {
+    addLog(`Connection error: ${msg}`);
+    setShowMobileModal(false);
+  };
+
   const connect = async () => {
-    // Mobile: show wallet selector
     if (isMobileDevice()) {
       setShowMobileModal(true);
       return;
     }
 
-    // Desktop: existing logic
     if (!window.solana?.isPhantom) {
       alert('Please install Phantom wallet');
       return;
@@ -126,10 +121,7 @@ function App() {
       const addr = resp.publicKey.toString();
       setAddress(addr);
       addLog(`Connected: ${addr.slice(0, 8)}...`);
-
-      const bal = await connection.getBalance(new PublicKey(addr));
-      setBalance(bal / LAMPORTS_PER_SOL);
-      addLog(`Balance: ${bal / LAMPORTS_PER_SOL} SOL`);
+      await fetchBalance(addr);
     } catch (err: any) {
       addLog(`Connection error: ${err.message}`);
     }
@@ -138,9 +130,11 @@ function App() {
   const disconnect = async () => {
     try {
       await window.solana?.disconnect();
+      await window.solflare?.disconnect();
     } catch {}
     setAddress('');
     setBalance(null);
+    sessionStorage.removeItem('wallet_address');
     addLog('Disconnected');
   };
 
@@ -152,9 +146,7 @@ function App() {
       const sig = await connection.requestAirdrop(new PublicKey(address), 2 * LAMPORTS_PER_SOL);
       await connection.confirmTransaction(sig, 'confirmed');
       addLog(`Airdrop successful!`);
-      const bal = await connection.getBalance(new PublicKey(address));
-      setBalance(bal / LAMPORTS_PER_SOL);
-      addLog(`New balance: ${bal / LAMPORTS_PER_SOL} SOL`);
+      await fetchBalance(address);
     } catch (err: any) {
       addLog(`Airdrop failed: ${err.message}`);
     }
@@ -174,12 +166,20 @@ function App() {
       const { blockhash } = await connection.getLatestBlockhash();
       tx.recentBlockhash = blockhash;
       tx.feePayer = from;
-      const signed = await window.solana.signTransaction(tx);
+      
+      let signed;
+      if (window.solana?.isPhantom) {
+        signed = await window.solana.signTransaction(tx);
+      } else if (window.solflare?.isSolflare) {
+        signed = await window.solflare.signTransaction(tx);
+      } else {
+        throw new Error('No wallet provider found');
+      }
+      
       const sig = await connection.sendRawTransaction(signed.serialize());
       await connection.confirmTransaction(sig, 'confirmed');
       addLog(`SUCCESS! Tx sent!`);
-      const bal = await connection.getBalance(from);
-      setBalance(bal / LAMPORTS_PER_SOL);
+      await fetchBalance(address);
     } catch (err: any) {
       addLog(`Failed: ${err.message}`);
     }

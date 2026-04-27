@@ -15,28 +15,32 @@ interface Props {
 export function WalletSelectorModal({ onClose, onConnected, onError }: Props) {
   const handleSelect = async (walletId: string) => {
     try {
-      // 1. Already connected via provider? Check provider state directly
+      // Already connected?
       if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
         onConnected(window.solana.publicKey.toString());
         return;
       }
+      if (window.solflare?.isSolflare && window.solflare.isConnected && window.solflare.publicKey) {
+        onConnected(window.solflare.publicKey.toString());
+        return;
+      }
 
-      // 2. Check session cache
+      // Check session cache
       const cached = sessionStorage.getItem('wallet_address');
       if (cached) {
         onConnected(cached);
         return;
       }
 
-      // 3. Inside wallet browser (Phantom / Solflare) - use provider directly
+      // Inside wallet browser - use provider directly
       if (isWalletBrowser()) {
         await handleInAppConnect(walletId, onConnected, onError);
         return;
       }
 
-      // 4. Mobile external browser - use universal link
+      // Mobile external browser - use deep link
       if (isMobileDevice()) {
-        await handleMobileConnect(walletId);
+        handleMobileDeepLink(walletId);
         return;
       }
 
@@ -74,10 +78,7 @@ export function WalletSelectorModal({ onClose, onConnected, onError }: Props) {
   );
 }
 
-/* =========================
-   IN-APP WALLET BROWSER
-   Phantom/Solflare in-app browser
-========================= */
+/* IN-APP WALLET BROWSER */
 async function handleInAppConnect(
   walletId: string,
   onConnected: (a: string) => void,
@@ -85,17 +86,13 @@ async function handleInAppConnect(
 ) {
   try {
     if (walletId === 'phantom' && (window as any).solana?.isPhantom) {
-      // Try silent connect first (onlyIfTrusted) - avoids repeated prompts on page reload
-      // If already trusted, this restores session without UI
       let resp;
       try {
         resp = await (window as any).solana.connect({ onlyIfTrusted: true });
       } catch {
-        // Not trusted yet - do full connect
         resp = await (window as any).solana.connect();
       }
       const addr = resp.publicKey.toString();
-      // Cache for session persistence
       sessionStorage.setItem('wallet_address', addr);
       sessionStorage.setItem('wallet_connected_at', Date.now().toString());
       onConnected(addr);
@@ -122,45 +119,49 @@ async function handleInAppConnect(
   }
 }
 
-/* =========================
-   MOBILE EXTERNAL BROWSER
-   Uses Universal Link (not deep link)
-   This ensures provider state is set after redirect
-========================= */
-async function handleMobileConnect(walletId: string) {
-  const baseUrl = window.location.origin;
+/* MOBILE DEEP LINK - FIXED */
+function handleMobileDeepLink(walletId: string) {
+  const currentUrl = window.location.href;
+  const encodedUrl = encodeURIComponent(currentUrl);
 
-  if (walletId === 'phantom') {
-    // Universal link opens in same browser, user approves, redirects back
-    // Provider will be connected when page reloads
-    const url = new URL('https://phantom.app/ul/v1/connect');
-    url.searchParams.append('app_url', baseUrl);
-    url.searchParams.append('redirect_link', window.location.href);
-    url.searchParams.append('dapp_encryption_public_key', '');
-    url.searchParams.append('cluster', 'devnet');
+  let deepLink = '';
 
-    // Store current state so we know we initiated connection
-    sessionStorage.setItem('wallet_redirect', window.location.href);
-    sessionStorage.setItem('wallet_id', walletId);
-    sessionStorage.setItem('wallet_connect_started', Date.now().toString());
-
-    window.location.href = url.toString();
-    // After redirect, App.tsx useEffect will detect provider connection
-    return;
+  switch (walletId) {
+    case 'phantom':
+      deepLink = `phantom://browse?url=${encodedUrl}`;
+      break;
+    case 'solflare':
+      deepLink = `solflare://browse?url=${encodedUrl}`;
+      break;
+    case 'trust':
+      deepLink = `trust://browser?url=${encodedUrl}`;
+      break;
+    case 'coinbase':
+      deepLink = `cbwallet://browser?url=${encodedUrl}`;
+      break;
+    case 'exodus':
+      deepLink = `exodus://open?url=${encodedUrl}`;
+      break;
+    case 'sollet':
+      deepLink = `https://www.sollet.io/`;
+      break;
+    default:
+      deepLink = `https://phantom.app/ul/browse?url=${encodedUrl}`;
   }
 
-  if (walletId === 'solflare') {
-    const url = new URL('https://solflare.com/ul/v1/connect');
-    url.searchParams.append('redirect_url', window.location.href);
-    url.searchParams.append('cluster', 'devnet');
+  // Store redirect info
+  sessionStorage.setItem('wallet_redirect', currentUrl);
+  sessionStorage.setItem('wallet_id', walletId);
+  sessionStorage.setItem('wallet_connect_started', Date.now().toString());
 
-    sessionStorage.setItem('wallet_redirect', window.location.href);
-    sessionStorage.setItem('wallet_id', walletId);
-    sessionStorage.setItem('wallet_connect_started', Date.now().toString());
+  // Open the wallet app
+  window.location.href = deepLink;
 
-    window.location.href = url.toString();
-    return;
-  }
-
-  throw new Error('Unsupported wallet');
+  // Fallback: if user doesn't have wallet installed
+  setTimeout(() => {
+    const wallet = WALLETS.find(w => w.id === walletId);
+    if (wallet && confirm(`Don't have ${wallet.name} installed? Open install page?`)) {
+      window.location.href = wallet.installUrl;
+    }
+  }, 2000);
 }
