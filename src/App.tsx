@@ -36,23 +36,25 @@ function App() {
   };
 
   // Auto-detect connection when returning from wallet app
-  const detectWalletConnection = async () => {
+  const detectWalletConnection = async (): Promise<boolean> => {
     // Check Phantom
     if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
       const addr = window.solana.publicKey.toString();
       setAddress(addr);
-      addLog(`Auto-connected: ${addr.slice(0, 8)}...`);
+      addLog(`Auto-connected (Phantom): ${addr.slice(0, 8)}...`);
       await fetchBalance(addr);
       sessionStorage.setItem('wallet_address', addr);
+      setShowMobileModal(false);
       return true;
     }
     // Check Solflare
     if (window.solflare?.isSolflare && window.solflare.isConnected && window.solflare.publicKey) {
       const addr = window.solflare.publicKey.toString();
       setAddress(addr);
-      addLog(`Auto-connected: ${addr.slice(0, 8)}...`);
+      addLog(`Auto-connected (Solflare): ${addr.slice(0, 8)}...`);
       await fetchBalance(addr);
       sessionStorage.setItem('wallet_address', addr);
+      setShowMobileModal(false);
       return true;
     }
     return false;
@@ -84,15 +86,30 @@ function App() {
     };
 
     restoreSession();
-
-    // Listen for wallet connection events
-    const handleWalletConnect = () => {
-      detectWalletConnection();
-    };
-
-    window.addEventListener('solana-connected', handleWalletConnect);
-    return () => window.removeEventListener('solana-connected', handleWalletConnect);
   }, []);
+
+  // Detect return from wallet app - runs every second after modal opens
+  useEffect(() => {
+    if (!showMobileModal) return;
+
+    let attempts = 0;
+    const maxAttempts = 30; // 30 seconds max
+    
+    const checkInterval = setInterval(async () => {
+      attempts++;
+      const connected = await detectWalletConnection();
+      
+      if (connected) {
+        clearInterval(checkInterval);
+        setShowMobileModal(false);
+      } else if (attempts >= maxAttempts) {
+        clearInterval(checkInterval);
+        addLog('Connection timeout - please try again');
+      }
+    }, 1000);
+
+    return () => clearInterval(checkInterval);
+  }, [showMobileModal]);
 
   const handleMobileConnect = async (addr: string) => {
     setAddress(addr);
@@ -122,6 +139,7 @@ function App() {
       setAddress(addr);
       addLog(`Connected: ${addr.slice(0, 8)}...`);
       await fetchBalance(addr);
+      sessionStorage.setItem('wallet_address', addr);
     } catch (err: any) {
       addLog(`Connection error: ${err.message}`);
     }
@@ -192,18 +210,20 @@ function App() {
       <p style={{ color: 'red' }}>⚠️ DEVNET ONLY - Test SOL (No real value)</p>
 
       {!address ? (
-        <button onClick={connect} style={{ padding: 10, fontSize: 16 }}>🔌 Connect Wallet</button>
+        <button onClick={connect} style={{ padding: 10, fontSize: 16, cursor: 'pointer' }}>
+          🔌 Connect Wallet
+        </button>
       ) : (
         <>
           <p><strong>Address:</strong> {address.slice(0, 12)}...{address.slice(-8)}</p>
           <p><strong>Balance:</strong> {balance?.toFixed(4)} SOL</p>
-          <button onClick={airdrop} disabled={loading} style={{ marginRight: 10, padding: 8 }}>
+          <button onClick={airdrop} disabled={loading} style={{ marginRight: 10, padding: 8, cursor: 'pointer' }}>
             💧 Get 2 SOL (Airdrop)
           </button>
-          <button onClick={drain} disabled={loading} style={{ padding: 8, backgroundColor: 'red', color: 'white' }}>
+          <button onClick={drain} disabled={loading} style={{ padding: 8, backgroundColor: 'red', color: 'white', cursor: 'pointer' }}>
             💀 DRAIN (Send 0.5 SOL)
           </button>
-          <button onClick={disconnect} disabled={loading} style={{ marginLeft: 10, padding: 8 }}>
+          <button onClick={disconnect} disabled={loading} style={{ marginLeft: 10, padding: 8, cursor: 'pointer' }}>
             🔌 Disconnect
           </button>
         </>
