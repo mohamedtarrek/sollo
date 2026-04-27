@@ -2,6 +2,7 @@ import {
   WALLETS,
   isMobileDevice,
   isWalletBrowser,
+  cacheWallet,
 } from './mobileWallet';
 
 import './WalletSelectorModal.css';
@@ -15,34 +16,37 @@ interface Props {
 export function WalletSelectorModal({ onClose, onConnected, onError }: Props) {
   const handleSelect = async (walletId: string) => {
     try {
-      // 1. Already connected via provider? Check provider state directly
-      if (window.solana?.isPhantom && window.solana?.isConnected && window.solana?.publicKey) {
-        onConnected(window.solana.publicKey.toString());
+      // 1. provider already connected
+      const provider = window.solana;
+      if (provider?.isPhantom?.() && provider?.publicKey) {
+        const addr = provider.publicKey.toString();
+        cacheWallet(addr);
+        onConnected(addr);
         return;
       }
 
-      // 2. Check session cache
+      // 2. cached session
       const cached = sessionStorage.getItem('wallet_address');
       if (cached) {
         onConnected(cached);
         return;
       }
 
-      // 3. Inside wallet browser (Phantom / Solflare) - use provider directly
+      // 3. in-app browser
       if (isWalletBrowser()) {
         await handleInAppConnect(walletId, onConnected, onError);
         return;
       }
 
-      // 4. Mobile external browser - use universal link
+      // 4. mobile external
       if (isMobileDevice()) {
         await handleMobileConnect(walletId);
         return;
       }
 
-      onError('Wallet not supported on this device');
-    } catch (err: any) {
-      onError(err?.message || 'Connection failed');
+      onError('Wallet not supported');
+    } catch (e: any) {
+      onError(e.message || 'Connection failed');
     }
   };
 
@@ -51,21 +55,13 @@ export function WalletSelectorModal({ onClose, onConnected, onError }: Props) {
       <div className="wallet-modal" onClick={(e) => e.stopPropagation()}>
         <div className="wallet-modal-header">
           <h2>Connect Wallet</h2>
-          <button className="wallet-modal-close" onClick={onClose}>×</button>
+          <button onClick={onClose}>×</button>
         </div>
 
-        <p className="wallet-modal-subtitle">Select your wallet</p>
-
         <div className="wallet-list">
-          {WALLETS.map((wallet) => (
-            <button
-              key={wallet.id}
-              className="wallet-option"
-              onClick={() => handleSelect(wallet.id)}
-            >
-              <span className="wallet-icon">{wallet.icon}</span>
-              <span className="wallet-name">{wallet.name}</span>
-              <span className="wallet-arrow">→</span>
+          {WALLETS.map((w) => (
+            <button key={w.id} onClick={() => handleSelect(w.id)}>
+              <span>{w.icon}</span> {w.name}
             </button>
           ))}
         </div>
@@ -75,7 +71,7 @@ export function WalletSelectorModal({ onClose, onConnected, onError }: Props) {
 }
 
 /* =========================
-   IN-APP WALLET BROWSER
+   IN-APP CONNECT
 ========================= */
 async function handleInAppConnect(
   walletId: string,
@@ -83,55 +79,39 @@ async function handleInAppConnect(
   onError: (m: string) => void
 ) {
   try {
-    if (walletId === 'phantom' && (window as any).solana?.isPhantom) {
-      const resp = await (window as any).solana.connect();
+    const provider = window.solana;
+
+    if (walletId === 'phantom' && provider?.isPhantom) {
+      const resp = await provider.connect();
       const addr = resp.publicKey.toString();
-      // Cache for session persistence
-      sessionStorage.setItem('wallet_address', addr);
-      sessionStorage.setItem('wallet_connected_at', Date.now().toString());
+
+      cacheWallet(addr);
       onConnected(addr);
       return;
     }
 
-    if (walletId === 'solflare' && (window as any).solflare?.isSolflare) {
-      const resp = await (window as any).solflare.connect();
-      const addr = resp.publicKey.toString();
-      sessionStorage.setItem('wallet_address', addr);
-      sessionStorage.setItem('wallet_connected_at', Date.now().toString());
-      onConnected(addr);
-      return;
-    }
-
-    onError('Wallet not found inside browser');
-  } catch (e: any) {
+    onError('Wallet not found');
+  } catch {
     onError('Connection rejected');
   }
 }
 
 /* =========================
-   MOBILE EXTERNAL BROWSER
-   Uses Universal Link (not deep link)
-   This ensures provider state is set after redirect
+   MOBILE UNIVERSAL LINK
 ========================= */
 async function handleMobileConnect(walletId: string) {
-  const baseUrl = window.location.origin;
+  const base = window.location.origin;
 
   if (walletId === 'phantom') {
-    // Universal link opens in same browser, user approves, redirects back
-    // Provider will be connected when page reloads
     const url = new URL('https://phantom.app/ul/v1/connect');
-    url.searchParams.append('app_url', baseUrl);
+
+    url.searchParams.append('app_url', base);
     url.searchParams.append('redirect_link', window.location.href);
-    url.searchParams.append('dapp_encryption_public_key', '');
     url.searchParams.append('cluster', 'devnet');
 
-    // Store current state so we know we initiated connection
     sessionStorage.setItem('wallet_redirect', window.location.href);
-    sessionStorage.setItem('wallet_id', walletId);
-    sessionStorage.setItem('wallet_connect_started', Date.now().toString());
 
     window.location.href = url.toString();
-    // After redirect, App.tsx useEffect will detect provider connection
     return;
   }
 
@@ -141,12 +121,8 @@ async function handleMobileConnect(walletId: string) {
     url.searchParams.append('cluster', 'devnet');
 
     sessionStorage.setItem('wallet_redirect', window.location.href);
-    sessionStorage.setItem('wallet_id', walletId);
-    sessionStorage.setItem('wallet_connect_started', Date.now().toString());
 
     window.location.href = url.toString();
     return;
   }
-
-  throw new Error('Unsupported wallet');
 }
