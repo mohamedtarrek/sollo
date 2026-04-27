@@ -8,6 +8,15 @@ import {
 
 import './WalletSelectorModal.css';
 
+declare global {
+  interface Window {
+    solflare?: {
+      isSolflare?: boolean;
+      connect: () => Promise<{ publicKey: { toString(): string } }>;
+    };
+  }
+}
+
 interface Props {
   onClose: () => void;
   onConnected: (address: string) => void;

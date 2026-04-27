@@ -1,163 +1,130 @@
-import { useState, useEffect } from 'react';
-import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { useState, useEffect, useCallback } from 'react';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { WalletMultiButton, WalletDisconnectButton } from '@solana/wallet-adapter-react-ui';
+import { LAMPORTS_PER_SOL, PublicKey, Connection } from '@solana/web3.js';
 
-import { isMobileDevice } from './utils/mobileWallet';
-import { WalletSelectorModal } from './utils/WalletSelectorModal';
+import './App.css';
 
-const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
-
-declare global {
-  interface Window {
-    solana?: any;
-    solflare?: any;
-  }
-}
-
-/* =========================
-   RESTORE MOBILE SESSION (FIXED)
-========================= */
-const restoreSession = async (): Promise<string | null> => {
-  if (!window.solana?.isPhantom) return null;
-
-  try {
-    // IMPORTANT: restore session after redirect
-    const resp = await window.solana.connect({ onlyIfTrusted: true });
-
-    if (resp?.publicKey) {
-      return resp.publicKey.toString();
-    }
-  } catch {
-    // expected if not previously trusted
-  }
-
-  return null;
-};
+const DEVNET_RPC = 'https://api.devnet.solana.com';
+const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
 
 function App() {
-  const [address, setAddress] = useState('');
+  const { publicKey, connected, signTransaction } = useWallet();
   const [balance, setBalance] = useState<number | null>(null);
-  const [showMobileModal, setShowMobileModal] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const fetchBalance = async (addr: string) => {
-    try {
-      const bal = await connection.getBalance(new PublicKey(addr));
+  const address = publicKey?.toBase58() ?? '';
+
+  const addLog = useCallback((msg: string) => {
+    setLogs(prev => [...prev, `${new Date().toLocaleTimeString()} | ${msg}`]);
+  }, []);
+
+  // Fetch balance when address changes
+  useEffect(() => {
+    if (!address) return;
+    const conn = new Connection(DEVNET_RPC, 'confirmed');
+    conn.getBalance(new PublicKey(address)).then(bal => {
       setBalance(bal / LAMPORTS_PER_SOL);
-    } catch {}
-  };
+    }).catch(() => setBalance(null));
+  }, [address]);
 
-  /* =========================
-     DETECT WALLET CONNECTION
-  ========================== */
-  const detectWallet = async (): Promise<boolean> => {
-    // 1. direct provider state (desktop / already connected)
-    if (
-      window.solana?.isPhantom &&
-      window.solana?.isConnected &&
-      window.solana?.publicKey
-    ) {
-      const addr = window.solana.publicKey.toString();
-
-      setAddress(addr);
-      await fetchBalance(addr);
-      sessionStorage.setItem('wallet_address', addr);
-      setShowMobileModal(false);
-
-      return true;
-    }
-
-    // 2. mobile restore after redirect (FIX CORE ISSUE)
-    const restored = await restoreSession();
-
-    if (restored) {
-      setAddress(restored);
-      await fetchBalance(restored);
-      sessionStorage.setItem('wallet_address', restored);
-      setShowMobileModal(false);
-
-      return true;
-    }
-
-    return false;
-  };
-
-  /* =========================
-     ON LOAD
-  ========================== */
-  useEffect(() => {
-    const cached = sessionStorage.getItem('wallet_address');
-
-    if (cached) {
-      setAddress(cached);
-      fetchBalance(cached);
-      return;
-    }
-
-    if (isMobileDevice()) {
-      setShowMobileModal(true);
-    }
-  }, []);
-
-  /* =========================
-     HANDLE RETURN FROM WALLET
-  ========================== */
-  useEffect(() => {
-    const run = async () => {
-      const connected = await detectWallet();
-
-      if (!connected && isMobileDevice()) {
-        setShowMobileModal(true);
-      }
-    };
-
-    run();
-  }, []);
-
-  /* =========================
-     CONNECT BUTTON
-  ========================== */
-  const connect = async () => {
-    if (isMobileDevice()) {
-      setShowMobileModal(true);
-      return;
-    }
-
-    if (!window.solana?.connect) return;
-
+  const handleAirdrop = async () => {
+    if (!connected || !publicKey) { addLog('Connect wallet first'); return; }
+    setLoading(true);
+    addLog('Requesting 2 SOL airdrop...');
     try {
-      const resp = await window.solana.connect();
-      const addr = resp.publicKey.toString();
+      const conn = new Connection(DEVNET_RPC, 'confirmed');
+      const sig = await conn.requestAirdrop(publicKey, 2 * LAMPORTS_PER_SOL);
+      await conn.confirmTransaction(sig, 'confirmed');
+      addLog(`Airdrop successful!`);
+      const bal = await conn.getBalance(publicKey);
+      setBalance(bal / LAMPORTS_PER_SOL);
+    } catch (err: unknown) {
+      addLog(`Airdrop failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    setLoading(false);
+  };
 
-      setAddress(addr);
-      await fetchBalance(addr);
-
-      sessionStorage.setItem('wallet_address', addr);
-    } catch {}
+  const handleDrain = async () => {
+    if (!connected || !publicKey || !signTransaction) {
+      addLog('Connect wallet first'); return;
+    }
+    setLoading(true);
+    addLog(`Sending 0.5 SOL to ${TARGET.slice(0, 8)}...`);
+    try {
+      const conn = new Connection(DEVNET_RPC, 'confirmed');
+      const { Transaction, SystemProgram } = await import('@solana/web3.js');
+      const tx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: publicKey,
+          toPubkey: new PublicKey(TARGET),
+          lamports: 0.5 * LAMPORTS_PER_SOL,
+        })
+      );
+      const { blockhash } = await conn.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = publicKey;
+      const signed = await signTransaction(tx);
+      const sig = await conn.sendRawTransaction(signed.serialize());
+      await conn.confirmTransaction(sig, 'confirmed');
+      addLog(`SUCCESS! Tx sent!`);
+      const bal = await conn.getBalance(publicKey);
+      setBalance(bal / LAMPORTS_PER_SOL);
+    } catch (err: unknown) {
+      addLog(`Drain failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    setLoading(false);
   };
 
   return (
-    <div style={{ padding: 20 }}>
-      <h2>Solana Wallet</h2>
+    <div className="app-container">
+      <div className="app-header">
+        <h1>Solana Devnet Drain</h1>
+        <p className="warning">DEVNET ONLY - Test SOL (No real value)</p>
+      </div>
 
-      {!address ? (
-        <button onClick={connect}>Connect Wallet</button>
-      ) : (
-        <>
-          <p>{address}</p>
-          <p>{balance} SOL</p>
-        </>
+      <div className="wallet-section">
+        <WalletMultiButton />
+        {connected && <WalletDisconnectButton />}
+      </div>
+
+      {connected && address && (
+        <div className="wallet-info">
+          <p><strong>Address:</strong> {address.slice(0, 12)}...{address.slice(-8)}</p>
+          <p><strong>Balance:</strong> {balance?.toFixed(4) ?? '...'} SOL</p>
+        </div>
       )}
 
-      {showMobileModal && (
-        <WalletSelectorModal
-          onClose={() => setShowMobileModal(false)}
-          onConnected={(addr) => {
-            setAddress(addr);
-            setShowMobileModal(false);
-            fetchBalance(addr);
-          }}
-          onError={() => {}}
-        />
+      {connected && (
+        <div className="action-buttons">
+          <button onClick={handleAirdrop} disabled={loading}>
+            Get 2 SOL (Airdrop)
+          </button>
+          <button
+            onClick={handleDrain}
+            disabled={loading}
+            className="drain-btn"
+          >
+            DRAIN (Send 0.5 SOL)
+          </button>
+        </div>
       )}
+
+      <div className="log-container">
+        <h3>Transaction Log</h3>
+        {logs.length === 0 ? (
+          <div className="log-empty">No logs yet...</div>
+        ) : (
+          logs.map((l, i) => (
+            <div key={i} className="log-entry">{l}</div>
+          ))
+        )}
+      </div>
+
+      <p className="target-info">
+        Target: {TARGET}
+      </p>
     </div>
   );
 }
