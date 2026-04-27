@@ -3,9 +3,10 @@ export interface WalletInfo {
   name: string;
   icon: string;
   installUrl: string;
-  deepLink: string;
-  fallbackDeepLink?: string;
+  buildDeepLink: (dappUrl: string, cluster?: string) => string;
 }
+
+const CLUSTER = 'devnet';
 
 export const WALLETS: WalletInfo[] = [
   {
@@ -13,48 +14,48 @@ export const WALLETS: WalletInfo[] = [
     name: 'Phantom',
     icon: '👻',
     installUrl: 'https://phantom.app/',
-    deepLink: 'phantom://connect',
-    fallbackDeepLink: 'https://phantom.app/',
+    buildDeepLink: (dappUrl, cluster = CLUSTER) =>
+      `phantom://connect?dappUrl=${encodeURIComponent(dappUrl)}&cluster=${cluster}`,
   },
   {
     id: 'solflare',
     name: 'Solflare',
     icon: '☀️',
     installUrl: 'https://solflare.com/',
-    deepLink: 'solflare://connect',
-    fallbackDeepLink: 'https://solflare.com/',
+    buildDeepLink: (dappUrl, cluster = CLUSTER) =>
+      `solflare://connect?dappUrl=${encodeURIComponent(dappUrl)}&cluster=${cluster}`,
   },
   {
     id: 'trust',
     name: 'Trust Wallet',
     icon: '🐉',
     installUrl: 'https://trustwallet.com/',
-    deepLink: 'trust://connect',
-    fallbackDeepLink: 'https://trustwallet.com/',
+    buildDeepLink: (dappUrl, cluster = CLUSTER) =>
+      `trust://connect?dappUrl=${encodeURIComponent(dappUrl)}&cluster=${cluster}`,
   },
   {
     id: 'coinbase',
     name: 'Coinbase Wallet',
     icon: '🔵',
     installUrl: 'https://www.coinbase.com/wallet/downloads',
-    deepLink: 'cbwallet://connect',
-    fallbackDeepLink: 'https://www.coinbase.com/wallet/downloads',
+    buildDeepLink: (dappUrl, cluster = CLUSTER) =>
+      `cbwallet://connect?dappUrl=${encodeURIComponent(dappUrl)}&cluster=${cluster}`,
   },
   {
     id: 'exodus',
     name: 'Exodus',
     icon: '🚀',
     installUrl: 'https://exodus.com/',
-    deepLink: 'exodus://connect',
-    fallbackDeepLink: 'https://exodus.com/',
+    buildDeepLink: (dappUrl, cluster = CLUSTER) =>
+      `exodus://connect?dappUrl=${encodeURIComponent(dappUrl)}&cluster=${cluster}`,
   },
   {
     id: 'sollet',
     name: 'Sollet',
     icon: '🎈',
     installUrl: 'https://sollet.io/',
-    deepLink: 'sollet://',
-    fallbackDeepLink: 'https://sollet.io/',
+    buildDeepLink: (dappUrl, cluster = CLUSTER) =>
+      `sollet://connect?dappUrl=${encodeURIComponent(dappUrl)}&cluster=${cluster}`,
   },
 ];
 
@@ -77,41 +78,13 @@ export function isInAppBrowser(): boolean {
   return inAppPatterns.some(pattern => pattern.test(userAgent));
 }
 
-export async function connectMobileWallet(wallet: WalletInfo): Promise<boolean> {
-  const { deepLink, fallbackDeepLink } = wallet;
+export function getDappUrl(): string {
+  return typeof window !== 'undefined' ? window.location.origin : '';
+}
 
-  // Try primary deep link first
-  window.location.href = deepLink;
-
-  // If not installed, the OS will show an error or do nothing
-  // We set a fallback timer to redirect to install page
-  return new Promise((resolve) => {
-    let fellBack = false;
-
-    const fallback = setTimeout(() => {
-      if (!fellBack) {
-        fellBack = true;
-        window.location.href = fallbackDeepLink ?? wallet.installUrl;
-        resolve(false);
-      }
-    }, 2000);
-
-    // Listen for visibility change (user came back from app)
-    const handleVisibility = () => {
-      if (!document.hidden && fellBack) {
-        clearTimeout(fallback);
-        resolve(true);
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    // Clean up after timeout
-    setTimeout(() => {
-      document.removeEventListener('visibilitychange', handleVisibility);
-      clearTimeout(fallback);
-    }, 5000);
-  });
+export function buildConnectionUrl(wallet: WalletInfo, cluster = CLUSTER): string {
+  const dappUrl = getDappUrl();
+  return wallet.buildDeepLink(dappUrl, cluster);
 }
 
 export function getInstallUrl(walletId: string): string {
