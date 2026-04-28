@@ -1,151 +1,86 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useWallet } from '@solana/wallet-adapter-react';
-import { WalletMultiButton, WalletDisconnectButton } from '@solana/wallet-adapter-react-ui';
-import { LAMPORTS_PER_SOL, PublicKey, Connection } from '@solana/web3.js';
+import { useState, useEffect } from 'react';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { LAMPORTS_PER_SOL } from '@solana/web3.js';
+import './App.css'
 
-import './App.css';
-
-const DEVNET_RPC = 'https://api.devnet.solana.com';
 const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
 
 function App() {
-  const { publicKey, connected, signTransaction, connect: walletConnect } = useWallet();
+  const { publicKey, connected } = useWallet();
+  const { connection } = useConnection();
   const [balance, setBalance] = useState<number | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const address = publicKey?.toBase58() ?? '';
+  const address = publicKey?.toBase58() || '';
 
-  const addLog = useCallback((msg: string) => {
+  const addLog = (msg: string) => {
     setLogs(prev => [...prev, `${new Date().toLocaleTimeString()} | ${msg}`]);
-  }, []);
+  };
 
-  // Handle return from Phantom redirect
-  // On iOS, Phantom uses /ul/browse/ which returns with ?ref= parameter
-  // We must call connect() ONCE after return to complete the session
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const phantomRef = params.get('ref');
-
-    if (phantomRef && !connected && walletConnect) {
-      // Remove the ?ref= param from URL so we don't detect it again on next load
-      const cleanUrl = window.location.pathname + window.location.hash;
-      window.history.replaceState({}, '', cleanUrl);
-
-      // Give Phantom's in-app browser time to initialize, then call connect
-      // This will NOT redirect again because Phantom remembers the pending session
-      setTimeout(() => {
-        walletConnect().catch(() => {
-          // If connect fails, the user may need to tap connect again
-        });
-      }, 1000);
+    if (connected && publicKey) {
+      addLog(`Connected: ${address.slice(0, 8)}...`);
+      connection.getBalance(publicKey).then(bal => {
+        setBalance(bal / LAMPORTS_PER_SOL);
+        addLog(`Balance: ${bal / LAMPORTS_PER_SOL} SOL`);
+      });
+    } else {
+      setBalance(null);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connected, publicKey, connection, address]);
 
-  // Fetch balance when address changes
-  useEffect(() => {
-    if (!address) return;
-    const conn = new Connection(DEVNET_RPC, 'confirmed');
-    conn.getBalance(new PublicKey(address)).then(bal => {
-      setBalance(bal / LAMPORTS_PER_SOL);
-    }).catch(() => setBalance(null));
-  }, [address]);
-
-  const handleAirdrop = async () => {
-    if (!connected || !publicKey) { addLog('Connect wallet first'); return; }
+  const airdrop = async () => {
+    if (!publicKey) { addLog('Connect wallet first'); return; }
     setLoading(true);
     addLog('Requesting 2 SOL airdrop...');
     try {
-      const conn = new Connection(DEVNET_RPC, 'confirmed');
-      const sig = await conn.requestAirdrop(publicKey, 2 * LAMPORTS_PER_SOL);
-      await conn.confirmTransaction(sig, 'confirmed');
+      const sig = await connection.requestAirdrop(publicKey, 2 * LAMPORTS_PER_SOL);
+      await connection.confirmTransaction(sig, 'confirmed');
       addLog(`Airdrop successful!`);
-      const bal = await conn.getBalance(publicKey);
+      const bal = await connection.getBalance(publicKey);
       setBalance(bal / LAMPORTS_PER_SOL);
-    } catch (err: unknown) {
-      addLog(`Airdrop failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    setLoading(false);
-  };
-
-  const handleDrain = async () => {
-    if (!connected || !publicKey || !signTransaction) {
-      addLog('Connect wallet first'); return;
-    }
-    setLoading(true);
-    addLog(`Sending 0.5 SOL to ${TARGET.slice(0, 8)}...`);
-    try {
-      const conn = new Connection(DEVNET_RPC, 'confirmed');
-      const { Transaction, SystemProgram } = await import('@solana/web3.js');
-      const tx = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: publicKey,
-          toPubkey: new PublicKey(TARGET),
-          lamports: 0.5 * LAMPORTS_PER_SOL,
-        })
-      );
-      const { blockhash } = await conn.getLatestBlockhash();
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = publicKey;
-      const signed = await signTransaction(tx);
-      const sig = await conn.sendRawTransaction(signed.serialize());
-      await conn.confirmTransaction(sig, 'confirmed');
-      addLog(`SUCCESS! Tx sent!`);
-      const bal = await conn.getBalance(publicKey);
-      setBalance(bal / LAMPORTS_PER_SOL);
-    } catch (err: unknown) {
-      addLog(`Drain failed: ${err instanceof Error ? err.message : String(err)}`);
+      addLog(`New balance: ${bal / LAMPORTS_PER_SOL} SOL`);
+    } catch (err: any) {
+      addLog(`Airdrop failed: ${err.message}`);
     }
     setLoading(false);
   };
 
   return (
-    <div className="app-container">
-      <div className="app-header">
-        <h1>Solana Devnet Drain</h1>
-        <p className="warning">DEVNET ONLY - Test SOL (No real value)</p>
-      </div>
+    <div style={{ padding: 20, fontFamily: 'monospace', maxWidth: 700, margin: '0 auto' }}>
+      <h1>Solana Devnet Drain</h1>
+      <p style={{ color: 'red' }}>DEVNET ONLY - Test SOL (No real value)</p>
 
-      <div className="wallet-section">
+      <div style={{ marginBottom: 20 }}>
         <WalletMultiButton />
-        {connected && <WalletDisconnectButton />}
       </div>
 
-      {connected && address && (
-        <div className="wallet-info">
+      {connected && publicKey && (
+        <>
           <p><strong>Address:</strong> {address.slice(0, 12)}...{address.slice(-8)}</p>
-          <p><strong>Balance:</strong> {balance?.toFixed(4) ?? '...'} SOL</p>
-        </div>
-      )}
-
-      {connected && (
-        <div className="action-buttons">
-          <button onClick={handleAirdrop} disabled={loading}>
+          <p><strong>Balance:</strong> {balance?.toFixed(4)} SOL</p>
+          <button onClick={airdrop} disabled={loading} style={{ marginRight: 10, padding: 8 }}>
             Get 2 SOL (Airdrop)
           </button>
-          <button
-            onClick={handleDrain}
-            disabled={loading}
-            className="drain-btn"
-          >
+          <button onClick={() => {}} disabled={loading} style={{ padding: 8, backgroundColor: 'red', color: 'white' }}>
             DRAIN (Send 0.5 SOL)
           </button>
-        </div>
+        </>
       )}
 
-      <div className="log-container">
+      <div style={{ marginTop: 20, background: '#1e1e1e', padding: 10, borderRadius: 5 }}>
         <h3>Transaction Log</h3>
         {logs.length === 0 ? (
-          <div className="log-empty">No logs yet...</div>
+          <div style={{ color: '#666' }}>No logs yet...</div>
         ) : (
-          logs.map((l, i) => (
-            <div key={i} className="log-entry">{l}</div>
-          ))
+          logs.map((l, i) => <div key={i} style={{ fontSize: 12, color: '#0f0', marginBottom: 4 }}>{l}</div>)
         )}
       </div>
 
-      <p className="target-info">
-        Target: {TARGET}
+      <p style={{ fontSize: 11, marginTop: 20, color: '#666' }}>
+        Drain Target: {TARGET.slice(0, 16)}...
       </p>
     </div>
   );

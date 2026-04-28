@@ -1,14 +1,14 @@
-import './polyfills';
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import './index.css';
-import App from './App.tsx';
-import { SolanaProvider } from './providers/SolanaProvider';
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import '@solana/wallet-adapter-react-ui/styles.css'
+import { ContextProvider } from './contexts/ContextProvider'
+import App from './App'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <SolanaProvider>
+    <ContextProvider>
       <App />
-    </SolanaProvider>
+    </ContextProvider>
   </StrictMode>,
-);
+)
