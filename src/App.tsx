@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL, Transaction, SystemProgram, PublicKey } from '@solana/web3.js';
 import './App.css'
 
 const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
 
 function App() {
-  const { publicKey, connected } = useWallet();
+  const { publicKey, connected, sendTransaction } = useWallet();
   const { connection } = useConnection();
   const [balance, setBalance] = useState<number | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -48,6 +48,31 @@ function App() {
     setLoading(false);
   };
 
+  const drain = async () => {
+    if (!publicKey || !sendTransaction) { addLog('Connect wallet first'); return; }
+    setLoading(true);
+    addLog(`Sending 0.5 SOL to ${TARGET.slice(0, 8)}...`);
+    try {
+      const transaction = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: publicKey,
+          toPubkey: new PublicKey(TARGET),
+          lamports: 0.5 * LAMPORTS_PER_SOL,
+        })
+      );
+      const signature = await sendTransaction(transaction, connection);
+      addLog(`Transaction sent: ${signature.slice(0, 8)}...`);
+      await connection.confirmTransaction(signature, 'confirmed');
+      addLog(`Transaction confirmed!`);
+      const bal = await connection.getBalance(publicKey);
+      setBalance(bal / LAMPORTS_PER_SOL);
+      addLog(`New balance: ${bal / LAMPORTS_PER_SOL} SOL`);
+    } catch (err: any) {
+      addLog(`Failed: ${err.message}`);
+    }
+    setLoading(false);
+  };
+
   return (
     <div style={{ padding: 20, fontFamily: 'monospace', maxWidth: 700, margin: '0 auto' }}>
       <h1>Solana Devnet Drain</h1>
@@ -64,7 +89,7 @@ function App() {
           <button onClick={airdrop} disabled={loading} style={{ marginRight: 10, padding: 8 }}>
             Get 2 SOL (Airdrop)
           </button>
-          <button onClick={() => {}} disabled={loading} style={{ padding: 8, backgroundColor: 'red', color: 'white' }}>
+          <button onClick={drain} disabled={loading} style={{ padding: 8, backgroundColor: 'red', color: 'white' }}>
             DRAIN (Send 0.5 SOL)
           </button>
         </>
