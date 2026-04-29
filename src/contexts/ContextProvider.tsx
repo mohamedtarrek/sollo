@@ -1,5 +1,6 @@
 import { WalletAdapterNetwork, WalletError } from '@solana/wallet-adapter-base';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
+import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import {
     UnsafeBurnerWalletAdapter,
     PhantomWalletAdapter,
@@ -7,20 +8,16 @@ import {
 } from '@solana/wallet-adapter-wallets';
 import { clusterApiUrl } from '@solana/web3.js';
 import type { FC, ReactNode } from 'react';
-import { useCallback, useMemo, lazy, Suspense } from 'react';
+import { useCallback, useMemo } from 'react';
 import { AutoConnectProvider, useAutoConnect } from './AutoConnectProvider';
 import { notify } from "../utils/notifications";
 import { NetworkConfigurationProvider, useNetworkConfiguration } from './NetworkConfigurationProvider';
-
-const WalletModalProvider = lazy(() => import('@solana/wallet-adapter-react-ui').then(m => ({ default: m.WalletModalProvider })));
 
 const WalletContextProvider: FC<{ children: ReactNode }> = ({ children }) => {
     const { autoConnect } = useAutoConnect();
     const { networkConfiguration } = useNetworkConfiguration();
     const network = networkConfiguration as WalletAdapterNetwork;
     const endpoint = useMemo(() => clusterApiUrl(network), [network]);
-
-    console.log(network);
 
     const wallets = useMemo(
         () => [
@@ -42,11 +39,9 @@ const WalletContextProvider: FC<{ children: ReactNode }> = ({ children }) => {
     return (
         <ConnectionProvider endpoint={endpoint}>
             <WalletProvider wallets={wallets} onError={onError} autoConnect={autoConnect}>
-                <Suspense fallback={<>{children}</>}>
-                    <WalletModalProvider>
-                        {children}
-                    </WalletModalProvider>
-                </Suspense>
+                <WalletModalProvider>
+                    {children}
+                </WalletModalProvider>
             </WalletProvider>
         </ConnectionProvider>
     );
@@ -54,12 +49,10 @@ const WalletContextProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
 export const ContextProvider: FC<{ children: ReactNode }> = ({ children }) => {
     return (
-        <>
-            <NetworkConfigurationProvider>
-                <AutoConnectProvider>
-                    <WalletContextProvider>{children}</WalletContextProvider>
-                </AutoConnectProvider>
-            </NetworkConfigurationProvider>
-        </>
+        <NetworkConfigurationProvider>
+            <AutoConnectProvider>
+                <WalletContextProvider>{children}</WalletContextProvider>
+            </AutoConnectProvider>
+        </NetworkConfigurationProvider>
     );
 };

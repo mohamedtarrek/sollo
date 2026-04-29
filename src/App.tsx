@@ -1,9 +1,8 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { LAMPORTS_PER_SOL, Transaction, SystemProgram, PublicKey } from '@solana/web3.js';
 import './App.css'
-
-const WalletMultiButton = lazy(() => import('@solana/wallet-adapter-react-ui').then(m => ({ default: m.WalletMultiButton })));
 
 const TARGET = 'Fh7X5J8MRsch2HKuniXEAXsDXHjh7pb6wUvJU9Kd4hBQ';
 
@@ -80,9 +79,7 @@ function App() {
       <p style={{ color: 'red' }}>DEVNET ONLY - Test SOL (No real value)</p>
 
       <div style={{ marginBottom: 20 }}>
-        <Suspense fallback={<div>Loading wallet...</div>}>
-          <WalletMultiButton />
-        </Suspense>
+        <WalletMultiButton />
       </div>
 
       {connected && publicKey && (
